@@ -239,5 +239,4 @@ static inline void tick_nohz_task_switch(struct task_struct *tsk)
 		__tick_nohz_task_switch(tsk);
 }
 
-
 #endif
