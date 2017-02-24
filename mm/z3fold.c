@@ -132,7 +132,6 @@ struct z3fold_pool {
 	spinlock_t stale_lock;
 	struct list_head *unbuddied;
 	struct list_head lru;
-	struct list_head stale;
 	atomic64_t pages_nr;
 	const struct z3fold_ops *ops;
 	struct zpool *zpool;
@@ -502,16 +501,7 @@ static struct z3fold_pool *z3fold_create_pool(const char *name, gfp_t gfp,
 			INIT_LIST_HEAD(&unbuddied[i]);
 	}
 	INIT_LIST_HEAD(&pool->lru);
-	INIT_LIST_HEAD(&pool->stale);
 	atomic64_set(&pool->pages_nr, 0);
-	pool->name = name;
-	pool->compact_wq = create_singlethread_workqueue(pool->name);
-	if (!pool->compact_wq)
-		goto out;
-	pool->release_wq = create_singlethread_workqueue(pool->name);
-	if (!pool->release_wq)
-		goto out_wq;
-	INIT_WORK(&pool->work, free_pages_work);
 	pool->ops = ops;
 	return pool;
 
@@ -669,9 +659,9 @@ lookup:
 
 	if (!page)
 		return -ENOMEM;
-
+	spin_lock(&pool->lock);
 	atomic64_inc(&pool->pages_nr);
-	zhdr = init_z3fold_page(page, pool);
+	zhdr = init_z3fold_page(page);
 
 	if (bud == HEADLESS) {
 		set_bit(PAGE_HEADLESS, &page->private);
@@ -771,13 +761,23 @@ static void z3fold_free(struct z3fold_pool *pool, unsigned long handle)
 		return;
 	}
 
-	if (kref_put(&zhdr->refcount, release_z3fold_page_locked_list)) {
+	/* Remove from existing buddy list */
+	if (bud != HEADLESS)
+		list_del(&zhdr->buddy);
+
+	if (bud == HEADLESS ||
+	    (zhdr->first_chunks == 0 && zhdr->middle_chunks == 0 &&
+			zhdr->last_chunks == 0)) {
+		/* z3fold page is empty, free */
+		list_del(&page->lru);
+		clear_bit(PAGE_HEADLESS, &page->private);
+		free_z3fold_page(zhdr);
 		atomic64_dec(&pool->pages_nr);
-		return;
-	}
-	if (test_and_set_bit(NEEDS_COMPACTING, &page->private)) {
-		z3fold_page_unlock(zhdr);
-		return;
+	} else {
+		z3fold_compact_page(zhdr);
+		/* Add to the unbuddied list */
+		freechunks = num_free_chunks(zhdr);
+		list_add(&zhdr->buddy, &pool->unbuddied[freechunks]);
 	}
 	if (zhdr->cpu < 0 || !cpu_online(zhdr->cpu)) {
 		spin_lock(&pool->lock);
@@ -907,13 +907,16 @@ static int z3fold_reclaim_page(struct z3fold_pool *pool, unsigned int retries)
 		}
 next:
 		spin_lock(&pool->lock);
-		if (test_bit(PAGE_HEADLESS, &page->private)) {
-			if (ret == 0) {
-				spin_unlock(&pool->lock);
-				free_z3fold_page(page);
-				return 0;
-			}
-		} else if (kref_put(&zhdr->refcount, release_z3fold_page)) {
+		clear_bit(UNDER_RECLAIM, &page->private);
+		if ((test_bit(PAGE_HEADLESS, &page->private) && ret == 0) ||
+		    (zhdr->first_chunks == 0 && zhdr->last_chunks == 0 &&
+		     zhdr->middle_chunks == 0)) {
+			/*
+			 * All buddies are now free, free the z3fold page and
+			 * return success.
+			 */
+			clear_bit(PAGE_HEADLESS, &page->private);
+			free_z3fold_page(zhdr);
 			atomic64_dec(&pool->pages_nr);
 			spin_unlock(&pool->lock);
 			return 0;
