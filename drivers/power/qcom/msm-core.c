@@ -101,7 +101,7 @@ struct cpu_static_info {
 static DEFINE_MUTEX(policy_update_mutex);
 static DEFINE_MUTEX(suspend_update_mutex);
 static DEFINE_SPINLOCK(update_lock);
-static struct delayed_work sampling_work;
+static struct work_struct sampling_work;
 static struct workqueue_struct *msm_core_wq;
 static int low_hyst_temp;
 static int high_hyst_temp;
@@ -180,23 +180,11 @@ static void set_threshold(struct cpu_activity_info *cpu_node)
 		&cpu_node->low_threshold);
 }
 
-static inline bool should_run_resampling(void)
-{
-	if (!mutex_is_locked(&suspend_update_mutex) && !in_suspend)
-		return true;
-	else
-		return false;
-}
-
 static inline void schedule_sampling(void)
 {
-	if (should_run_resampling()) {
-		forced_timeout = jiffies + msecs_to_jiffies(SAMPLE_MAX_TIMEOUT_MS);
-		if (delayed_work_pending(&sampling_work))
-			cancel_delayed_work(&sampling_work);
-		queue_delayed_work(msm_core_wq, &sampling_work,
-					msecs_to_jiffies(0));
-	}
+	if (!work_busy(&sampling_work) && !in_suspend)
+		queue_work(msm_core_wq, &sampling_work);
+
 }
 
 /* May be called from an interrupt context */
@@ -213,6 +201,7 @@ static void core_temp_notify(enum thermal_trip_type type,
 
 	/* Schedule resampling if the forced timeout is over */
 	if (time_after(jiffies, forced_timeout)) {
+		forced_timeout = jiffies + msecs_to_jiffies(poll_ms);
 		schedule_sampling();
 	}
 }
@@ -331,10 +320,10 @@ static inline void do_sampling(void)
 	struct cpu_activity_info *cpu_node;
 	static int prev_temp[NR_CPUS];
 
-	if (!should_run_resampling())
-		return;
-
 	mutex_lock(&suspend_update_mutex);
+	if (in_suspend)
+		goto unlock;
+
 	trigger_cpu_pwr_stats_calc();
 
 	for_each_online_cpu(cpu) {
@@ -349,17 +338,14 @@ static inline void do_sampling(void)
 				scaling_factor);
 		}
 	}
+unlock:
 		mutex_unlock(&suspend_update_mutex);
 }
 
 static void samplequeue_handle(struct work_struct *work)
 {
-	/* Prevent race with core_temp notification by using SAMPLE_MAX_TIMEOUT_MS */
-	forced_timeout = jiffies + msecs_to_jiffies(SAMPLE_MAX_TIMEOUT_MS);
 	do_sampling();
-	forced_timeout = jiffies + msecs_to_jiffies(poll_ms / 2);
-	queue_delayed_work(msm_core_wq, &sampling_work,
-				msecs_to_jiffies(poll_ms));
+	forced_timeout = jiffies + msecs_to_jiffies(poll_ms);
 }
 
 static void clear_static_power(struct cpu_static_info *sp)
@@ -858,7 +844,7 @@ static int system_suspend_handler(struct notifier_block *nb,
 		 * after system resume
 		 */
 		in_suspend = 1;
-		cancel_delayed_work(&sampling_work);
+		cancel_work(&sampling_work);
 		/*
 		 * cancel TSENS interrupts as we do not want to wake up from
 		 * suspend to take care of repopulate stats while the system is
@@ -1088,7 +1074,7 @@ static int msm_core_dev_probe(struct platform_device *pdev)
 	if (ret)
 		goto failed;
 
-	INIT_DEFERRABLE_WORK(&sampling_work, samplequeue_handle);
+	INIT_WORK(&sampling_work, samplequeue_handle);
 	ret = msm_core_task_init(&pdev->dev);
 	if (ret)
 		goto failed;
@@ -1096,8 +1082,8 @@ static int msm_core_dev_probe(struct platform_device *pdev)
 	for_each_possible_cpu(cpu)
 		set_threshold(&activity[cpu]);
 
-	INIT_DELAYED_WORK(&sampling_work, samplequeue_handle);
 	schedule_sampling();
+
 	cpufreq_register_notifier(&cpu_policy, CPUFREQ_POLICY_NOTIFIER);
 	pm_notifier(system_suspend_handler, 0);
 	return 0;
