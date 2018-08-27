@@ -654,6 +654,20 @@ static const struct arm64_cpu_capabilities arm64_features[] = {
 		.matches = cpufeature_pan_not_uao,
 	},
 #endif /* CONFIG_ARM64_PAN */
+#ifdef CONFIG_UNMAP_KERNEL_AT_EL0
+	{
+		.capability = ARM64_UNMAP_KERNEL_AT_EL0,
+		.matches = unmap_kernel_at_el0,
+	},
+#endif
+	{
+		.desc = "CRC32 instructions",
+		.capability = ARM64_HAS_CRC32,
+		.matches = has_cpuid_feature,
+		.sys_reg = SYS_ID_AA64ISAR0_EL1,
+		.field_pos = ID_AA64ISAR0_CRC32_SHIFT,
+		.min_field_value = 1,
+	},
 	{},
 };
 
