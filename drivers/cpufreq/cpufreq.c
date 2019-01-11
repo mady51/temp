@@ -627,9 +627,11 @@ static ssize_t store_##file_name					\
 	    || new_policy.max < new_policy.user_policy.min)		\
 		return -EINVAL;						\
 									\
-	policy->user_policy.object = new_policy.object;			\
 									\
+		policy->user_policy.min = new_policy.min;			\
+	policy->user_policy.max = new_policy.max;			\
 	ret = cpufreq_set_policy(policy, &new_policy);			\
+	policy->user_policy.object = new_policy.object;			\
 	if (ret)							\
 		pr_warn("User policy not enforced yet!\n");		\
 									\
@@ -2324,8 +2326,8 @@ static int cpufreq_set_policy(struct cpufreq_policy *policy,
 
 	scale_freq_capacity(new_policy, NULL);
 
-	policy->min = policy->min;
-	policy->max = policy->max;
+	policy->min = new_policy->min;
+	policy->max = new_policy->max;
 	trace_cpu_frequency_limits(policy->max, policy->min, policy->cpu);
 
 	pr_debug("new min and max freqs are %u - %u kHz\n",
