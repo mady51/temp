@@ -145,7 +145,7 @@ struct zpool *zpool_create_pool(const char *type, const char *name, gfp_t gfp,
 
 	zpool->type = driver->type;
 	zpool->driver = driver;
-	zpool->pool = driver->create(name, gfp, ops, zpool);
+	zpool->pool = driver->create(name, gfp, ops);
 	zpool->ops = ops;
 	zpool->evictable = driver->shrink && ops && ops->evict;
 

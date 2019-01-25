@@ -25,38 +25,10 @@ config ZRAM_LZ4_COMPRESS
 	  This option enables LZ4 compression algorithm support. Compression
 	  algorithm can be changed using `comp_algorithm' device attribute.
 
-
-config ZRAM_DEFAULT_COMP_ALGORITHM
-	string "Default ZRAM algorithm"
-	default "lzo"
-
-if ZRAM
-
-choice
-	prompt "Default zRAM compressed memory allocator"
-	default ZRAM_DEFAULT_ZSMALLOC
+config ZRAM_DEBUG
+	bool "Compressed RAM block device debug support"
+	depends on ZRAM
+	default n
 	help
-	  Select the compressed memory allocator that will be used by default
-	  for all devices.
-
-	config ZRAM_DEFAULT_ZBUD
-		bool "zbud"
-		select ZBUD
-
-	config ZRAM_DEFAULT_Z3FOLD
-		bool "z3fold"
-		select Z3FOLD
-
-	config ZRAM_DEFAULT_ZSMALLOC
-		bool "zsmalloc"
-		select ZSMALLOC
-
-endchoice
-
-config ZRAM_DEFAULT_POOL
-	string
-	default "zbud" if ZRAM_DEFAULT_ZBUD
-	default "z3fold" if ZRAM_DEFAULT_Z3FOLD
-	default "zsmalloc" if ZRAM_DEFAULT_ZSMALLOC
-
-endif
+	  This option adds additional debugging code to the compressed
+	  RAM block device driver.
