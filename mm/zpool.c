@@ -22,8 +22,7 @@ struct zpool {
 
 	struct zpool_driver *driver;
 	void *pool;
-	const struct zpool_ops *ops;
-	bool evictable;
+	struct zpool_ops *ops;
 
 	struct list_head list;
 };
@@ -74,8 +73,34 @@ int zpool_unregister_driver(struct zpool_driver *driver)
 }
 EXPORT_SYMBOL(zpool_unregister_driver);
 
-/* this assumes @type is null-terminated. */
-static struct zpool_driver *zpool_get_driver(const char *type)
+/**
+ * zpool_evict() - evict callback from a zpool implementation.
+ * @pool:	pool to evict from.
+ * @handle:	handle to evict.
+ *
+ * This can be used by zpool implementations to call the
+ * user's evict zpool_ops struct evict callback.
+ */
+int zpool_evict(void *pool, unsigned long handle)
+{
+	struct zpool *zpool;
+
+	spin_lock(&pools_lock);
+	list_for_each_entry(zpool, &pools_head, list) {
+		if (zpool->pool == pool) {
+			spin_unlock(&pools_lock);
+			if (!zpool->ops || !zpool->ops->evict)
+				return -EINVAL;
+			return zpool->ops->evict(zpool, handle);
+		}
+	}
+	spin_unlock(&pools_lock);
+
+	return -ENOENT;
+}
+EXPORT_SYMBOL(zpool_evict);
+
+static struct zpool_driver *zpool_get_driver(char *type)
 {
 	struct zpool_driver *driver;
 
@@ -110,14 +135,14 @@ static void zpool_put_driver(struct zpool_driver *driver)
  *
  * This creates a new zpool of the specified type.  The gfp flags will be
  * used when allocating memory, if the implementation supports it.  If the
- * ops param is NULL, then the created zpool will not be evictable.
+ * ops param is NULL, then the created zpool will not be shrinkable.
  *
  * Implementations must guarantee this to be thread-safe.
  *
  * Returns: New zpool on success, NULL on failure.
  */
-struct zpool *zpool_create_pool(const char *type, const char *name, gfp_t gfp,
-		const struct zpool_ops *ops)
+struct zpool *zpool_create_pool(char *type, char *name, gfp_t gfp,
+		struct zpool_ops *ops)
 {
 	struct zpool_driver *driver;
 	struct zpool *zpool;
@@ -147,7 +172,6 @@ struct zpool *zpool_create_pool(const char *type, const char *name, gfp_t gfp,
 	zpool->driver = driver;
 	zpool->pool = driver->create(name, gfp, ops);
 	zpool->ops = ops;
-	zpool->evictable = driver->shrink && ops && ops->evict;
 
 	if (!zpool->pool) {
 		pr_err("couldn't create %s pool\n", type);
@@ -264,8 +288,7 @@ void zpool_free(struct zpool *zpool, unsigned long handle)
 int zpool_shrink(struct zpool *zpool, unsigned int pages,
 			unsigned int *reclaimed)
 {
-	return zpool->driver->shrink ?
-	       zpool->driver->shrink(zpool->pool, pages, reclaimed) : -EINVAL;
+	return zpool->driver->shrink(zpool->pool, pages, reclaimed);
 }
 
 /**
@@ -324,31 +347,19 @@ u64 zpool_get_total_size(struct zpool *zpool)
 	return zpool->driver->total_size(zpool->pool);
 }
 
-/**
- * zpool_compact() - trigger backend-specific pool compaction
- * @pool	The zpool to compact
- *
- * This returns the total size in bytes of the pool.
- *
- * Returns: Number of pages compacted
- */
-unsigned long zpool_compact(struct zpool *zpool)
+static int __init init_zpool(void)
 {
-	return zpool->driver->compact ?
-		zpool->driver->compact(zpool->pool) : 0;
+	pr_info("loaded\n");
+	return 0;
 }
 
-/**
- * zpool_get_num_compacted() - get the number of migrated/compacted pages
- * @stats       stats to fill in
- *
- * Returns: the total number of migrated pages for the pool
- */
-unsigned long zpool_get_num_compacted(struct zpool *zpool)
+static void __exit exit_zpool(void)
 {
-	return zpool->driver->get_num_compacted ?
-		zpool->driver->get_num_compacted(zpool->pool) : 0;
+	pr_info("unloaded\n");
 }
+
+module_init(init_zpool);
+module_exit(exit_zpool);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Dan Streetman <ddstreet@ieee.org>");
