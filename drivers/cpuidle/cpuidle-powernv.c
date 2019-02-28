@@ -102,8 +102,8 @@ static struct cpuidle_state powernv_states[MAX_POWERNV_IDLE_STATES] = {
 		.name = "NAP",
 		.desc = "NAP",
 		.flags = CPUIDLE_FLAG_TIME_VALID,
-		.exit_latency = 10,
-		.target_residency = 100,
+		.exit_latency = 5,
+		.target_residency = 50,
 		.enter = &nap_loop },
 	 { /* Fastsleep */
 		.name = "fastsleep",
