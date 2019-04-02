@@ -2646,7 +2646,8 @@ int f2fs_sanity_check_ckpt(struct f2fs_sb_info *sbi)
 	unsigned int cp_pack_start_sum, cp_payload;
 	block_t user_block_count;
 	int i, j;
-
+	
+	unsigned int ovp_segments, reserved_segments;
 	total = le32_to_cpu(raw_super->segment_count);
 	fsmeta = le32_to_cpu(raw_super->segment_count_ckpt);
 	sit_segs = le32_to_cpu(raw_super->segment_count_sit);
